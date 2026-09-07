@@ -13,54 +13,91 @@ Validate the same smoke contract on Linux, macOS, and Windows using
 - block a direct network request; and
 - compile and run a small native program.
 
-The Linux and macOS legs pass. The Windows leg is still unresolved.
+All three legs pass.
 
 ## Current state
 
 - Repository: `skrcta/native-sandbox-tests`
 - Branch: `main`
-- Latest commit: `6029e57` (`Use runner temp volume for Windows fixtures`)
-- Local Linux smoke test: passes
-- Latest Actions run: [34099345302](https://github.com/skrcta/native-sandbox-tests/actions/runs/34099345302)
-- Latest run result: Linux and macOS passed; Windows failed
-- Windows setup uses the package's `windows-install` command and the bundled
-  `srt-win` helper. The workflow also installs the MSVC developer environment.
+- Latest commit: `960b209` (`Give the sandboxed compiler its include and library paths`)
+- Latest Actions run: [34104440676](https://github.com/skrcta/native-sandbox-tests/actions/runs/34104440676)
+- Latest run result: Linux, macOS, and Windows passed
 
-The test now allocates its fixture under `RUNNER_TEMP` when that variable is
-available. This avoids the runner profile path that prevented the sandboxed
-Node process from resolving its entry point.
+Windows setup uses the package's `windows-install` command and the bundled
+`srt-win` helper. The workflow also installs the MSVC developer environment.
+`tests/windows-acl-probe.mjs` runs before the smoke test on Windows only and
+is advisory: it records filesystem-policy behavior and never fails the job.
 
-## Investigation history
+## Resolution
+
+Two defects were in play, and the first was masking the second.
+
+### The read deny was replaced by a write deny
+
+The Windows backend runs the command as a dedicated account and enforces
+filesystem policy with explicit ACEs for that account's SID. It keys **one
+deny ACE per path**, so a file named in both `denyRead` and `denyWrite`
+keeps only the mask applied last. The smoke test named its outside fixture
+in both lists.
+
+From inside the sandbox the fixture's DACL was:
+
+```
+<host>\srt-sandbox:(DENY)(DE,WD,AD,WEA,WA)
+<host>\srt-sandbox:(I)(DENY)(DC)
+BUILTIN\Administrators:(I)(F)
+NT AUTHORITY\SYSTEM:(I)(F)
+BUILTIN\Users:(I)(RX)
+```
+
+The surviving deny mask carries delete and write rights and no read bits.
+The read then succeeded through the inherited `BUILTIN\Users:(RX)` entry that
+the runner's volume root grants every local account.
+
+The fix is to assert each deny rule against its own fixture: reads against
+the outside fixture, writes against the context fixture. Both assertions are
+kept; they no longer share a target.
+
+The probe records three cases, and each run reproduces them:
+
+| scenario | target listed in | ambient rights | read |
+| --- | --- | --- | --- |
+| `both-lists` | `denyRead` + `denyWrite` | inherited | allowed |
+| `read-only` | `denyRead` | inherited | blocked |
+| `isolated` | `denyRead` + `denyWrite` | removed | blocked |
+
+`read-only` isolates the collision: the same ambient rights, the same
+target, one list instead of two, and the read is refused. `isolated` shows
+the second condition — the collision only becomes observable where the
+account has ambient rights to fall back on.
+
+### The sandboxed compiler had no include path
+
+With the deny rules separated, the leg reached the toolchain check and
+failed with `C1034: stdio.h: no include path set`. The backend starts the
+child from a fresh profile and overlays only `PATH`, `PATHEXT`, and its own
+proxy variables. `PATH` carried `cl.exe`, but `INCLUDE`, `LIB`, and `LIBPATH`
+never arrived. They are now set inside the command string alongside the
+fixture variables.
+
+## Earlier investigation
 
 The original run [34080509207](https://github.com/skrcta/native-sandbox-tests/actions/runs/34080509207)
 failed before the smoke test because the workflow used Node 20 while pnpm 11
 requires a newer Node release. The workflow was moved to Node 24.
 
-Subsequent failures were narrowed as follows:
-
 1. macOS needed a writable temporary directory and a usable compiler temp
-   location. Those issues are fixed; macOS is green.
+   location.
 2. Windows initially failed during sandbox setup because required environment
    variables and executable/read paths were missing.
 3. Windows then failed before the child script started with
    `EPERM: operation not permitted, lstat ...\\Users\\RUNNER~1\\AppData`.
-   Moving fixtures from the profile temp directory to `RUNNER_TEMP` fixed that
-   startup failure.
-4. In the latest run, Windows reaches the child process. The child reports
-   `OUTSIDE_READ was allowed`, so the explicit `denyRead` rule is not being
-   enforced for the protected file.
-
-The latest public check annotation shows that ACL setup itself reports success:
-
-- `acl grant exit=0`
-- `acl stamp exit=0`
-- one `denyRead` target and two `denyWrite` targets were applied
-- the network infrastructure initialized
-- the command then started under the sandbox
-
-The failure occurs after that point, before the first smoke marker. This makes
-the remaining problem a Windows filesystem-policy question rather than a
-workflow provisioning or command-quoting problem.
+   Moving fixtures to `RUNNER_TEMP` fixed that startup failure. This is the
+   same mechanism as the `isolated` probe scenario: the sandbox account has
+   no rights on the runner profile, and resolving a script entry point walks
+   every parent directory. It is worth remembering that the move to
+   `RUNNER_TEMP` is what supplied the ambient `BUILTIN\Users:(RX)` rights
+   that later let the collapsed deny mask go unnoticed.
 
 ## Important constraints
 
@@ -70,53 +107,52 @@ workflow provisioning or command-quoting problem.
   redacted.
 - The Windows implementation in the dependency is alpha. Do not claim that a
   successful ACL command means the policy was enforced; the child read/write
-  probes are the authoritative checks.
+  probes are the authoritative checks. The deny-mask collision is the
+  concrete instance: `acl stamp` reported `exit=0` and `1 denyRead` applied
+  on every failing run.
 - GitHub exposes run metadata, jobs, annotations, and artifact metadata without
   authentication, but raw job logs and artifact ZIP downloads require suitable
-  repository permissions.
+  repository permissions. Diagnostics that need to be readable from a public
+  run must go through check annotations, which is why the probe emits its
+  evidence there rather than to stdout alone.
+- Unauthenticated API calls are limited to 60 per hour, which is easy to
+  exhaust while polling a run.
 
-## Recommended next investigation
+## Open items
 
-1. Reproduce the latest test on a Windows machine and print the effective
-   identity (`whoami`) from inside the sandbox. Confirm that the child is the
-   dedicated sandbox account.
-2. Immediately after `acl stamp`, inspect the protected file's DACL with
-   `icacls` or PowerShell `Get-Acl`. Verify that an explicit deny ACE exists for
-   the sandbox SID and that it includes read access, not only write/delete
-   rights.
-3. Run a minimal direct probe through `srt-win exec` against one stamped file.
-   Keep this separate from Node, child-process inheritance, compiler, and
-   network checks so the result identifies the helper behavior.
-4. Compare a file under `RUNNER_TEMP` with a file under a newly created ordinary
-   directory on another volume, if available. Record the inherited ACEs and
-   whether the explicit deny behaves differently.
-5. Check the exact vendored helper version and compare its deny-mask behavior
-   with the upstream Windows ACL implementation. Relevant upstream context:
-   [Windows ACL behavior issue](https://github.com/anthropics/sandbox-runtime/issues/402)
-   and [Windows ACL stamping issue](https://github.com/anthropics/sandbox-runtime/issues/457).
-6. Once the cause is known, either fix the test configuration/helper and retain
-   the Windows leg, or mark only the unsupported assertion as a documented
-   limitation. Do not weaken the assertion silently.
+- The deny-mask collision is a dependency defect, not a test defect. It is
+  recorded in `README.md` and worth reporting upstream; see the related
+  [Windows ACL behavior issue](https://github.com/anthropics/sandbox-runtime/issues/402)
+  and [Windows ACL stamping issue](https://github.com/anthropics/sandbox-runtime/issues/457).
+  If a later release keys read and write denies separately, the probe's
+  `both-lists` row will flip to `blocked` and the two deny rules may share a
+  fixture again.
+- `ilammy/msvc-dev-cmd@v1` still targets the Node 20 action runtime and is
+  the remaining deprecation warning on the Windows job. The other actions
+  were moved to releases that target Node 24.
 
 ## Useful commands
 
 ```sh
 # Latest run and per-platform jobs
 curl -fsSL -H 'Accept: application/vnd.github+json' \
-  'https://api.github.com/repos/skrcta/native-sandbox-tests/actions/runs/34099345302' \
+  'https://api.github.com/repos/skrcta/native-sandbox-tests/actions/runs/34104440676' \
   | jq '{id,head_sha,status,conclusion,html_url}'
 
 curl -fsSL -H 'Accept: application/vnd.github+json' \
-  'https://api.github.com/repos/skrcta/native-sandbox-tests/actions/runs/34099345302/jobs?per_page=100' \
+  'https://api.github.com/repos/skrcta/native-sandbox-tests/actions/runs/34104440676/jobs?per_page=100' \
   | jq -r '.jobs[] | [.id,.name,.status,.conclusion] | @tsv'
 
-# Public check annotations (replace JOB_ID with the Windows job id)
+# Public check annotations, including the ACL probe (replace JOB_ID)
 curl -fsSL -H 'Accept: application/vnd.github+json' \
   'https://api.github.com/repos/skrcta/native-sandbox-tests/check-runs/JOB_ID/annotations' \
-  | jq -r '.[] | [.annotation_level,.message,.raw_details] | @tsv'
+  | jq -r '.[] | [.annotation_level,.title,.message] | @tsv'
 
-# Local regression on Linux
+# Local regression on Linux (needs bubblewrap and ripgrep)
 pnpm test:sandbox
+
+# Windows only
+pnpm probe:windows-acl
 ```
 
 ## Files to inspect first
@@ -124,4 +160,5 @@ pnpm test:sandbox
 - `.github/workflows/sandbox.yml` — matrix and Windows provisioning
 - `tests/sandbox-smoke.mjs` — fixture, runtime invocation, and evidence
 - `tests/sandbox-child.mjs` — filesystem, child-process, network, and compiler probes
+- `tests/windows-acl-probe.mjs` — standing evidence for the deny-mask limitation
 - `README.md` — public scope and limitations
