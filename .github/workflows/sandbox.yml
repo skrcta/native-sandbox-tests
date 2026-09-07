@@ -26,15 +26,15 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 11.24.0
 
       - name: Enable pnpm cache
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24.x
           cache: pnpm
@@ -64,12 +64,17 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Probe Windows ACL behavior
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: pnpm probe:windows-acl
+
       - name: Run smoke test
         run: pnpm test:sandbox
 
       - name: Upload evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sandbox-evidence-${{ matrix.label }}
           path: artifacts/
