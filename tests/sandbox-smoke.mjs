@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import process from "node:process";
 
 const repoRoot = resolve(import.meta.dirname, "..");
@@ -22,7 +22,6 @@ const outsideFile = join(outside, "secret.txt");
 const sourceFile = join(workspace, "toolchain.c");
 const settingsFile = join(fixtureRoot, "settings.json");
 const artifactDir = join(repoRoot, "artifacts");
-const nodeDirectory = dirname(process.execPath);
 const childScriptFixture = join(workspace, "sandbox-child.mjs");
 
 const started = new Date().toISOString();
@@ -53,7 +52,7 @@ try {
           network: { allowedDomains: [], deniedDomains: [] },
           filesystem: {
             denyRead: [outsideFile],
-            allowRead: [workspace, context, repoRoot, nodeDirectory, process.execPath],
+            allowRead: [workspace, context],
             allowWrite: [workspace, home],
             denyWrite: [contextFile, outsideFile],
           },
@@ -80,6 +79,7 @@ try {
     CLAUDE_CODE_TMPDIR: sandboxTemp,
     LANG: process.env.LANG,
     LC_ALL: process.env.LC_ALL,
+    SRT_DEBUG: "true",
     SANDBOX_WORKSPACE: workspace,
     SANDBOX_CONTEXT: contextFile,
     SANDBOX_OUTSIDE: outsideFile,
@@ -184,7 +184,9 @@ if (result.status !== "passed") {
   const markers = markerNames.filter((marker) => errorText.includes(marker));
   const diagnostic = errorText
     .split(/\r?\n/)
-    .filter((line) => /error|err_|eacces|eperm|enoent|invalid|denied|failed|cannot/i.test(line))
+    .filter((line) =>
+      markers.length === 0 || /error|err_|eacces|eperm|enoent|invalid|denied|failed|cannot|sandboxdebug/i.test(line),
+    )
     .join(" ")
     .replace(/file:\/\/\/?[A-Za-z]:[^\s]*/g, "<file>")
     .replace(/[A-Za-z]:[\\/](?:[^\s\\/]+[\\/])+[^\s]*/g, "<path>")
