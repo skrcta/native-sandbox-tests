@@ -171,7 +171,18 @@ try {
 }
 
 if (result.status !== "passed") {
-  const diagnostic = String(result.error)
+  const errorText = String(result.error);
+  const markerNames = [
+    "OUTSIDE_READ_BLOCKED",
+    "CONTEXT_WRITE_BLOCKED",
+    "CHILD_PROCESS_PASS",
+    "NETWORK_BLOCKED:",
+    "TOOLCHAIN_START",
+    "COMPILER_PASS",
+    "TOOLCHAIN_RUN_PASS",
+  ];
+  const markers = markerNames.filter((marker) => errorText.includes(marker));
+  const diagnostic = errorText
     .split(/\r?\n/)
     .filter((line) => /error|err_|eacces|eperm|enoent|invalid|denied|failed|cannot/i.test(line))
     .join(" ")
@@ -179,7 +190,7 @@ if (result.status !== "passed") {
     .replace(/[A-Za-z]:[\\/](?:[^\s\\/]+[\\/])+[^\s]*/g, "<path>")
     .replace(/\/(?:Users|home|runner|private|var|tmp)\/[^\s]*/g, "<path>")
     .slice(0, 700);
-  process.stdout.write(`::error title=Sandbox smoke failure::${diagnostic}\n`);
+  process.stdout.write(`::error title=Sandbox smoke failure::markers=${markers.join(",") || "none"} ${diagnostic}\n`);
   process.stderr.write(`${result.error}\n`);
   process.exitCode = 1;
 } else {
