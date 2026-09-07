@@ -85,7 +85,7 @@ try {
 
   const runtimeArgs = [runtimeCli, "--settings", settingsFile];
   if (process.platform === "win32") {
-    const quoteForCmd = (value) => `"${value.replaceAll('"', '\\"')}"`;
+    const quoteForCmd = (value) => `"${value.replaceAll("\\", "/").replaceAll('"', '\\"')}"`;
     runtimeArgs.push("-c", `${quoteForCmd(process.execPath)} ${quoteForCmd(childScript)}`);
   } else {
     runtimeArgs.push(process.execPath, childScript);

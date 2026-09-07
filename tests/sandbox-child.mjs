@@ -76,6 +76,7 @@ if (!source.includes("sandbox-toolchain")) {
   throw new Error("native source fixture is missing");
 }
 
+process.stdout.write("TOOLCHAIN_START\n");
 const isWindows = process.platform === "win32";
 let compiler;
 let compilerArgs;
@@ -103,6 +104,7 @@ if (compile.error) {
 if (compile.status !== 0) {
   throw new Error(`native compiler exited with ${compile.status}`);
 }
+process.stdout.write("COMPILER_PASS\n");
 
 const run = spawnSync(executable, [], {
   cwd: workspace,
@@ -116,4 +118,5 @@ if (run.status !== 0 || run.stdout.trim() !== "sandbox-toolchain") {
   throw new Error("native toolchain output was unexpected");
 }
 
+process.stdout.write("TOOLCHAIN_RUN_PASS\n");
 process.stdout.write("FILESYSTEM_PASS\nTOOLCHAIN_PASS\n");
