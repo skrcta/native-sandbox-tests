@@ -37,8 +37,6 @@ const AMBIENT_SIDS = [
   "*S-1-5-32-545", // BUILTIN\Users
 ];
 
-const forward = (value) => value.replaceAll("\\", "/");
-
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const redact = (text) => {
@@ -108,15 +106,21 @@ async function probe(scenario) {
       ),
     );
 
-    // cmd.exe built-ins plus System32 tools only. `if errorlevel` is used
-    // instead of `&&`/`||` so redirection failures are classified reliably.
+    // cmd.exe built-ins plus System32 tools only, chained with `&` so every
+    // step runs regardless of the one before it. `if errorlevel` classifies
+    // the redirection failures that `&&`/`||` would swallow. PROBE_ALIVE
+    // distinguishes "the shell never started" from "the shell ran and the
+    // probes were inconclusive". The trailing `ver` resets the exit status
+    // so a blocked write does not read as a launch failure.
     const command = [
+      "echo PROBE_ALIVE",
       "whoami",
-      `icacls "${forward(secretFile)}"`,
-      `type "${forward(secretFile)}" >nul 2>nul`,
+      `icacls "${secretFile}"`,
+      `type "${secretFile}" >nul 2>nul`,
       "if errorlevel 1 (echo PROBE_READ_BLOCKED) else (echo PROBE_READ_ALLOWED)",
-      `(echo probe)>>"${forward(contextFile)}" 2>nul`,
+      `(echo probe)>>"${contextFile}" 2>nul`,
       "if errorlevel 1 (echo PROBE_WRITE_BLOCKED) else (echo PROBE_WRITE_ALLOWED)",
+      "ver >nul",
     ].join(" & ");
 
     const child = spawn(process.execPath, [runtimeCli, "--settings", settingsFile, "-c", command], {
@@ -205,9 +209,26 @@ const summary = results
   .map((r) => `${r.scenario}: exit=${r.exit ?? "error"} read=${r.read ?? "n/a"} write=${r.write ?? "n/a"}`)
   .join(" | ");
 process.stdout.write(`::notice title=Windows ACL probe::${summary}\n`);
+
+// Raw job logs and artifact downloads need repository permissions; check
+// annotations do not. Route the evidence through annotations so the probe
+// is readable from the public run, and collapse it to one line each because
+// an annotation carries no line structure.
 for (const r of results) {
+  const setup = (r.setup ?? [])
+    .map((entry) => `${entry.step}=${entry.status}${entry.output ? ` (${entry.output})` : ""}`)
+    .join("; ");
+  const body = `${r.error ?? ""}\n${r.output ?? ""}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" | ")
+    .slice(0, 3000);
+  process.stdout.write(
+    `::notice title=Windows ACL probe (${r.scenario})::` +
+      `exit=${r.exit ?? "error"} read=${r.read ?? "n/a"} write=${r.write ?? "n/a"} ` +
+      `secretUnchanged=${r.secretUnchanged ?? "n/a"} contextUnchanged=${r.contextUnchanged ?? "n/a"} ` +
+      `setup[${setup}] ${body}\n`,
+  );
   process.stdout.write(`\n===== ${r.scenario} =====\n${r.error ?? r.output ?? ""}\n`);
-  for (const entry of r.setup ?? []) {
-    process.stdout.write(`setup ${entry.step}: exit=${entry.status} ${entry.output}\n`);
-  }
 }
