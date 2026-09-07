@@ -23,6 +23,7 @@ const sourceFile = join(workspace, "toolchain.c");
 const settingsFile = join(fixtureRoot, "settings.json");
 const artifactDir = join(repoRoot, "artifacts");
 const nodeDirectory = dirname(process.execPath);
+const childScriptFixture = join(workspace, "sandbox-child.mjs");
 
 const started = new Date().toISOString();
 let result;
@@ -40,6 +41,7 @@ try {
   await Promise.all([
     writeFile(contextFile, "context fixture\n"),
     writeFile(outsideFile, "private fixture\n"),
+    writeFile(childScriptFixture, await readFile(childScript, "utf8")),
     writeFile(
       sourceFile,
       '#include <stdio.h>\nint main(void) { puts("sandbox-toolchain"); return 0; }\n',
@@ -51,7 +53,7 @@ try {
           network: { allowedDomains: [], deniedDomains: [] },
           filesystem: {
             denyRead: [outsideFile],
-            allowRead: [workspace, context, repoRoot, nodeDirectory],
+            allowRead: [workspace, context, repoRoot, nodeDirectory, process.execPath],
             allowWrite: [workspace, home],
             denyWrite: [contextFile, outsideFile],
           },
@@ -87,9 +89,9 @@ try {
   const runtimeArgs = [runtimeCli, "--settings", settingsFile];
   if (process.platform === "win32") {
     const quoteForCmd = (value) => `"${value.replaceAll("\\", "/").replaceAll('"', '\\"')}"`;
-    runtimeArgs.push("-c", `${quoteForCmd(process.execPath)} ${quoteForCmd(childScript)}`);
+    runtimeArgs.push("-c", `${quoteForCmd(process.execPath)} ${quoteForCmd(childScriptFixture)}`);
   } else {
-    runtimeArgs.push(process.execPath, childScript);
+    runtimeArgs.push(process.execPath, childScriptFixture);
   }
   const child = spawn(process.execPath, runtimeArgs, {
     cwd: workspace,
