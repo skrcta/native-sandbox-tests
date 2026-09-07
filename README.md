@@ -11,9 +11,9 @@ This repository is experimental. It is not a security certification, a general-p
 - Use synthetic fixtures and deterministic checks.
 - Test writable workspaces and protected files separately.
 - Exercise child processes and indirect filesystem access where practical.
-- Check allowed and denied network destinations independently.
+- Check that a denied network destination is unreachable under an empty allowlist.
 - Build and run a small native program on each platform.
-- Record cancellation, cleanup, skipped checks, and failures.
+- Record cleanup, skipped checks, and failures.
 
 Platform-specific behavior should be implemented and reported separately. A virtualized environment does not establish the behavior of the corresponding native host.
 
@@ -25,4 +25,6 @@ Generated output belongs under `artifacts/`. Do not commit credentials, tokens, 
 
 ## Status
 
-The repository is initialized for experiments. Test code, dependencies, and continuous-integration workflows will be added as the evaluation develops.
+A basic smoke test and continuous-integration workflow are included. Coverage will expand as the evaluation develops.
+
+The workflow runs on GitHub-hosted Linux, macOS, and Windows runners. It uses synthetic fixtures and does not require model credentials.

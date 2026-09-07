@@ -1,0 +1,144 @@
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import process from "node:process";
+
+const repoRoot = resolve(import.meta.dirname, "..");
+const runtimeCli = join(repoRoot, "node_modules", "@anthropic-ai", "sandbox-runtime", "dist", "cli.js");
+const childScript = join(repoRoot, "tests", "sandbox-child.mjs");
+const fixtureRoot = await mkdtemp(join(tmpdir(), "native-sandbox-tests-"));
+const workspace = join(fixtureRoot, "workspace");
+const context = join(fixtureRoot, "context");
+const outside = join(fixtureRoot, "outside");
+const home = join(fixtureRoot, "home");
+const temp = join(home, "tmp");
+const workspaceResult = join(workspace, "result.txt");
+const childResult = join(workspace, "child-result.txt");
+const contextFile = join(context, "requirements.txt");
+const outsideFile = join(outside, "secret.txt");
+const sourceFile = join(workspace, "toolchain.c");
+const settingsFile = join(fixtureRoot, "settings.json");
+const artifactDir = join(repoRoot, "artifacts");
+
+const started = new Date().toISOString();
+let result;
+
+try {
+  await Promise.all([mkdir(workspace), mkdir(context), mkdir(outside), mkdir(home), mkdir(temp)]);
+  await Promise.all([
+    writeFile(contextFile, "context fixture\n"),
+    writeFile(outsideFile, "private fixture\n"),
+    writeFile(
+      sourceFile,
+      '#include <stdio.h>\nint main(void) { puts("sandbox-toolchain"); return 0; }\n',
+    ),
+    writeFile(
+      settingsFile,
+      JSON.stringify(
+        {
+          network: { allowedDomains: [], deniedDomains: [] },
+          filesystem: {
+            denyRead: [outsideFile],
+            allowRead: [workspace, context],
+            allowWrite: [workspace, home],
+            denyWrite: [contextFile, outsideFile],
+          },
+        },
+        null,
+        2,
+      ),
+    ),
+  ]);
+
+  const env = {
+    PATH: process.env.PATH,
+    SystemRoot: process.env.SystemRoot,
+    WINDIR: process.env.WINDIR,
+    COMSPEC: process.env.COMSPEC,
+    PATHEXT: process.env.PATHEXT,
+    TEMP: temp,
+    TMP: temp,
+    TMPDIR: temp,
+    HOME: home,
+    USERPROFILE: home,
+    LANG: process.env.LANG,
+    LC_ALL: process.env.LC_ALL,
+    SANDBOX_WORKSPACE: workspace,
+    SANDBOX_CONTEXT: contextFile,
+    SANDBOX_OUTSIDE: outsideFile,
+    SANDBOX_SOURCE: sourceFile,
+  };
+
+  const child = spawn(process.execPath, [runtimeCli, "--settings", settingsFile, process.execPath, childScript], {
+    cwd: workspace,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const exitCode = await new Promise((resolveExit, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolveExit({ code, signal }));
+  });
+
+  const output = `${stdout}${stderr}`;
+  if (exitCode.code !== 0) {
+    throw new Error(`sandbox command exited with ${exitCode.code ?? `signal ${exitCode.signal}`}\n${output}`);
+  }
+  for (const marker of ["OUTSIDE_READ_BLOCKED", "CONTEXT_WRITE_BLOCKED", "CHILD_PROCESS_PASS", "NETWORK_BLOCKED:", "FILESYSTEM_PASS", "TOOLCHAIN_PASS"]) {
+    if (!output.includes(marker)) throw new Error(`missing check marker: ${marker}\n${output}`);
+  }
+
+  if ((await readFile(workspaceResult, "utf8")) !== "sandbox result\n") throw new Error("workspace write failed");
+  if ((await readFile(childResult, "utf8")) !== "child result\n") throw new Error("child workspace write failed");
+  if ((await readFile(contextFile, "utf8")) !== "context fixture\n") throw new Error("protected file changed");
+  if ((await readFile(outsideFile, "utf8")) !== "private fixture\n") throw new Error("outside fixture changed");
+
+  result = {
+    status: "passed",
+    started,
+    finished: new Date().toISOString(),
+    node: process.version,
+    platform: process.platform,
+    architecture: process.arch,
+    runtime: "@anthropic-ai/sandbox-runtime@0.0.75",
+    checks: ["filesystem policy", "child process inheritance", "network policy", "native toolchain"],
+    policy: {
+      allowedDomains: [],
+      protectedReadFixture: "outside/secret.txt",
+      writableRoots: ["workspace", "home"],
+    },
+    output: output.slice(-12000),
+  };
+} catch (error) {
+  result = {
+    status: "failed",
+    started,
+    finished: new Date().toISOString(),
+    node: process.version,
+    platform: process.platform,
+    architecture: process.arch,
+    runtime: "@anthropic-ai/sandbox-runtime@0.0.75",
+    error: error instanceof Error ? error.stack : String(error),
+  };
+} finally {
+  await mkdir(artifactDir, { recursive: true });
+  const artifactName = `sandbox-${process.platform}.json`;
+  await writeFile(join(artifactDir, artifactName), `${JSON.stringify(result, null, 2)}\n`);
+  await rm(fixtureRoot, { recursive: true, force: true });
+}
+
+if (result.status !== "passed") {
+  process.stderr.write(`${result.error}\n`);
+  process.exitCode = 1;
+} else {
+  process.stdout.write(`sandbox smoke passed on ${process.platform}/${process.arch}\n`);
+}

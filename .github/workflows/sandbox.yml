@@ -1,0 +1,82 @@
+name: Native sandbox tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux
+            os: ubuntu-latest
+          - label: macOS
+            os: macos-14
+          - label: Windows
+            os: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+
+      - name: Enable pnpm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: pnpm
+
+      - name: Install Linux prerequisites
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y bubblewrap ripgrep socat
+          sudo sysctl -w kernel.unprivileged_userns_clone=1
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Install macOS prerequisites
+        if: runner.os == 'macOS'
+        run: brew install ripgrep
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Windows sandbox helper
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: node node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js windows-install
+
+      - name: Configure Windows toolchain
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Run smoke test
+        run: pnpm test:sandbox
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-evidence-${{ matrix.label }}
+          path: artifacts/
+          if-no-files-found: ignore
+
+      - name: Remove Windows sandbox helper
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: node node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js windows-uninstall

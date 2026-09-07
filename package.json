@@ -1,0 +1,16 @@
+{
+  "name": "native-sandbox-tests",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic checks for native process sandbox behavior",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "test:sandbox": "node tests/sandbox-smoke.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.75"
+  }
+}
