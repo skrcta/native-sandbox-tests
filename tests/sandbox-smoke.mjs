@@ -52,10 +52,16 @@ try {
         {
           network: { allowedDomains: [], deniedDomains: [] },
           filesystem: {
+            // The two deny rules address separate fixtures on purpose. The
+            // Windows backend keys one deny ACE per path, so listing a file
+            // under both denyRead and denyWrite leaves it with whichever
+            // mask is applied last -- a write-only mask that permits the
+            // read. Reads are asserted against the outside fixture, writes
+            // against the context fixture. See tests/windows-acl-probe.mjs.
             denyRead: [outsideFile],
             allowRead: [workspace, context],
             allowWrite: [workspace, home],
-            denyWrite: [contextFile, outsideFile],
+            denyWrite: [contextFile],
           },
         },
         null,

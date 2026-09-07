@@ -1,21 +1,28 @@
-// Windows-only diagnostic for the unresolved `denyRead` failure.
+// Windows-only diagnostic for the `denyRead` failure, kept as the standing
+// evidence for the limitation recorded in the README.
 //
 // The Windows backend has no inherent rights on the caller's files: it runs
 // the command as a dedicated account and adds explicit ACEs for that
-// account's SID. That model assumes the protected file is not already
-// readable by every local user. A runner temp volume does not hold that
-// assumption, so the probe runs the same policy twice and differs only in
-// the fixture's ambient ACL:
+// account's SID. Two things have to hold for a read deny to bite, and the
+// three scenarios separate them:
 //
-//   inherited - the fixture keeps whatever the temp volume grants
-//   isolated  - inheritance is materialized, then the world-readable
-//               groups are removed
+//   both-lists - the target is in denyRead AND denyWrite. The backend keys
+//                one deny row per path, so the second mask replaces the
+//                first and the read bits are lost.
+//   read-only  - the target is in denyRead alone, so its mask survives.
+//   isolated   - both lists again, but the fixture's inherited ACEs are
+//                materialized and the world-readable groups removed, so
+//                the account has no ambient rights to fall back on.
 //
 // Each scenario reports the identity the command ran as, the deny target's
-// DACL as the command itself sees it, and whether the read and the write
-// were refused. Only cmd.exe built-ins and System32 tools are used: the
-// isolated scenario deliberately removes the rights that a scripting host
-// would need to resolve an entry point through the fixture's parents.
+// DACL as the command itself sees it, and whether the read was refused.
+// Only cmd.exe built-ins and System32 tools are used: the isolated scenario
+// deliberately removes the rights a scripting host would need to resolve an
+// entry point through the fixture's parents.
+//
+// The write outcome is taken from the fixture's contents, not from the
+// shell: when cmd cannot open a `>>` target it reports the failure before
+// `2>nul` takes effect and does not set a usable errorlevel.
 
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
@@ -62,7 +69,13 @@ const runIcacls = (args) => {
   return { status: r.status, output };
 };
 
-async function probe(scenario) {
+const SCENARIOS = [
+  { name: "both-lists", denyWriteSecret: true, isolate: false },
+  { name: "read-only", denyWriteSecret: false, isolate: false },
+  { name: "isolated", denyWriteSecret: true, isolate: true },
+];
+
+async function probe({ name: scenario, denyWriteSecret, isolate }) {
   const root = await mkdtemp(join(fixtureBase, `sandbox-acl-${scenario}-`));
   const workspace = join(root, "workspace");
   const context = join(root, "context");
@@ -89,7 +102,7 @@ async function probe(scenario) {
       writeFile(secretFile, "private fixture\n"),
     ]);
 
-    if (scenario === "isolated") {
+    if (isolate) {
       // Materialize the inherited ACEs so they can be removed individually,
       // then drop the ones that hand read access to every local account.
       // The owner and the administrative entries survive, so cleanup and
@@ -109,7 +122,7 @@ async function probe(scenario) {
             denyRead: [secretFile],
             allowRead: [workspace, context],
             allowWrite: [workspace, home],
-            denyWrite: [contextFile, secretFile],
+            denyWrite: denyWriteSecret ? [contextFile, secretFile] : [contextFile],
           },
         },
         null,
@@ -130,7 +143,6 @@ async function probe(scenario) {
       `type "${secretFile}" >nul 2>nul`,
       "if errorlevel 1 (echo PROBE_READ_BLOCKED) else (echo PROBE_READ_ALLOWED)",
       `(echo probe)>>"${contextFile}" 2>nul`,
-      "if errorlevel 1 (echo PROBE_WRITE_BLOCKED) else (echo PROBE_WRITE_ALLOWED)",
       "ver >nul",
     ].join(" & ");
 
@@ -178,13 +190,9 @@ async function probe(scenario) {
         : output.includes("PROBE_READ_ALLOWED")
           ? "allowed"
           : "unknown",
-      write: output.includes("PROBE_WRITE_BLOCKED")
-        ? "blocked"
-        : output.includes("PROBE_WRITE_ALLOWED")
-          ? "allowed"
-          : "unknown",
+      // Authoritative: the shell's own status is not usable here.
+      write: (await readFile(contextFile, "utf8")) === "context fixture\n" ? "blocked" : "allowed",
       secretUnchanged: (await readFile(secretFile, "utf8")) === "private fixture\n",
-      contextUnchanged: (await readFile(contextFile, "utf8")) === "context fixture\n",
       setup: setup.map((entry) => ({ ...entry, output: redact(entry.output) })),
       output: redact(output).slice(-8000),
     };
@@ -195,7 +203,7 @@ async function probe(scenario) {
       setup: setup.map((entry) => ({ ...entry, output: redact(entry.output) })),
     };
   } finally {
-    if (scenario === "isolated") {
+    if (isolate) {
       // Restore inheritance before removal so the tree is deletable even if
       // the ACE edits above changed the owner's effective rights.
       runIcacls([root, "/reset", "/t", "/c", "/q"]);
@@ -210,7 +218,7 @@ if (process.platform !== "win32") {
 }
 
 const results = [];
-for (const scenario of ["inherited", "isolated"]) {
+for (const scenario of SCENARIOS) {
   results.push(await probe(scenario));
 }
 
@@ -242,7 +250,7 @@ for (const r of results) {
   process.stdout.write(
     `::notice title=Windows ACL probe (${r.scenario})::` +
       `${r.scenario}: exit=${r.exit ?? "error"} read=${r.read ?? "n/a"} write=${r.write ?? "n/a"} ` +
-      `secretUnchanged=${r.secretUnchanged ?? "n/a"} contextUnchanged=${r.contextUnchanged ?? "n/a"} ` +
+      `secretUnchanged=${r.secretUnchanged ?? "n/a"} ` +
       `setup[${setup}] ${body}\n`,
   );
   process.stdout.write(`\n===== ${r.scenario} =====\n${r.error ?? r.output ?? ""}\n`);
