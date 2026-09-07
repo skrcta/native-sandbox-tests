@@ -52,7 +52,14 @@ const redact = (text) => {
 
 const runIcacls = (args) => {
   const r = spawnSync("icacls", args, { encoding: "utf8", windowsHide: true });
-  return { status: r.status, output: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() };
+  // icacls echoes one "processed file" line per object. Keep only what
+  // signals a problem so the setup summary stays inside the annotation.
+  const output = `${r.stdout ?? ""}${r.stderr ?? ""}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^processed file:/i.test(line) && !/^Successfully processed/i.test(line))
+    .join(" ");
+  return { status: r.status, output };
 };
 
 async function probe(scenario) {
@@ -61,6 +68,8 @@ async function probe(scenario) {
   const context = join(root, "context");
   const guarded = join(root, "guarded");
   const home = join(root, "home");
+  const appData = join(home, "AppData", "Roaming");
+  const localAppData = join(home, "AppData", "Local");
   const contextFile = join(context, "requirements.txt");
   const secretFile = join(guarded, "secret.txt");
   const settingsFile = join(root, "settings.json");
@@ -72,6 +81,8 @@ async function probe(scenario) {
       mkdir(context),
       mkdir(guarded),
       mkdir(join(home, "tmp"), { recursive: true }),
+      mkdir(appData, { recursive: true }),
+      mkdir(localAppData, { recursive: true }),
     ]);
     await Promise.all([
       writeFile(contextFile, "context fixture\n"),
@@ -135,6 +146,10 @@ async function probe(scenario) {
         TMP: process.env.TMP,
         HOME: home,
         USERPROFILE: home,
+        // srt-win resolves its machine state DB through LOCALAPPDATA and
+        // refuses to grant without it.
+        APPDATA: appData,
+        LOCALAPPDATA: localAppData,
         CLAUDE_CODE_TMPDIR: join(home, "tmp"),
         SRT_DEBUG: "true",
       },
@@ -226,7 +241,7 @@ for (const r of results) {
     .slice(0, 3000);
   process.stdout.write(
     `::notice title=Windows ACL probe (${r.scenario})::` +
-      `exit=${r.exit ?? "error"} read=${r.read ?? "n/a"} write=${r.write ?? "n/a"} ` +
+      `${r.scenario}: exit=${r.exit ?? "error"} read=${r.read ?? "n/a"} write=${r.write ?? "n/a"} ` +
       `secretUnchanged=${r.secretUnchanged ?? "n/a"} contextUnchanged=${r.contextUnchanged ?? "n/a"} ` +
       `setup[${setup}] ${body}\n`,
   );
