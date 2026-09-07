@@ -25,7 +25,7 @@ const started = new Date().toISOString();
 let result;
 
 try {
-  await Promise.all([mkdir(workspace), mkdir(context), mkdir(outside), mkdir(home), mkdir(temp)]);
+  await Promise.all([mkdir(workspace), mkdir(context), mkdir(outside), mkdir(home), mkdir(temp, { recursive: true })]);
   await Promise.all([
     writeFile(contextFile, "context fixture\n"),
     writeFile(outsideFile, "private fixture\n"),
@@ -137,6 +137,11 @@ try {
 }
 
 if (result.status !== "passed") {
+  const diagnostic = String(result.error)
+    .replace(/([A-Za-z]:[\\/]|\/)(?:[^\s\\/]+[\\/])+[^\s]*/g, "<path>")
+    .replaceAll("\n", " ")
+    .slice(0, 500);
+  process.stdout.write(`::error title=Sandbox smoke failure::${diagnostic}\n`);
   process.stderr.write(`${result.error}\n`);
   process.exitCode = 1;
 } else {
