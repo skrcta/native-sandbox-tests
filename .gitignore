@@ -1,0 +1,13 @@
+# Generated experiment output and dependencies
+artifacts/
+node_modules/
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+
+# Local credentials and environment configuration
+.env
+.env.*
+auth.json
+.credentials.json
