@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 
 const repoRoot = resolve(import.meta.dirname, "..");
@@ -22,6 +22,7 @@ const outsideFile = join(outside, "secret.txt");
 const sourceFile = join(workspace, "toolchain.c");
 const settingsFile = join(fixtureRoot, "settings.json");
 const artifactDir = join(repoRoot, "artifacts");
+const nodeDirectory = dirname(process.execPath);
 
 const started = new Date().toISOString();
 let result;
@@ -50,7 +51,7 @@ try {
           network: { allowedDomains: [], deniedDomains: [] },
           filesystem: {
             denyRead: [outsideFile],
-            allowRead: [workspace, context],
+            allowRead: [workspace, context, repoRoot, nodeDirectory],
             allowWrite: [workspace, home],
             denyWrite: [contextFile, outsideFile],
           },
