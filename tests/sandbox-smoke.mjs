@@ -96,11 +96,22 @@ try {
   const runtimeArgs = [runtimeCli, "--settings", settingsFile];
   if (process.platform === "win32") {
     const quoteForCmd = (value) => `"${value.replaceAll("\\", "/").replaceAll('"', '\\"')}"`;
+    // The Windows backend starts the child from a fresh profile and overlays
+    // only PATH, PATHEXT, and its own proxy variables, so anything else the
+    // command needs has to be set inside the command string. PATH already
+    // carries the compiler; INCLUDE, LIB, and LIBPATH are what the developer
+    // environment adds around it, and without them cl.exe resolves no
+    // headers. Absent variables are dropped so a host without the developer
+    // environment fails on the compiler itself rather than on empty settings.
+    const toolchainEnv = ["INCLUDE", "LIB", "LIBPATH"]
+      .map((key) => [key, process.env[key]])
+      .filter(([, value]) => value);
     const fixtureEnv = [
       ["SANDBOX_WORKSPACE", workspace],
       ["SANDBOX_CONTEXT", contextFile],
       ["SANDBOX_OUTSIDE", outsideFile],
       ["SANDBOX_SOURCE", sourceFile],
+      ...toolchainEnv,
     ]
       .map(([key, value]) => `set "${key}=${value.replaceAll("\\", "/")}"`)
       .join(" && ");
