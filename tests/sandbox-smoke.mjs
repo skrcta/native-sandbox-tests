@@ -89,7 +89,18 @@ try {
   const runtimeArgs = [runtimeCli, "--settings", settingsFile];
   if (process.platform === "win32") {
     const quoteForCmd = (value) => `"${value.replaceAll("\\", "/").replaceAll('"', '\\"')}"`;
-    runtimeArgs.push("-c", `${quoteForCmd(process.execPath)} ${quoteForCmd(childScriptFixture)}`);
+    const fixtureEnv = [
+      ["SANDBOX_WORKSPACE", workspace],
+      ["SANDBOX_CONTEXT", contextFile],
+      ["SANDBOX_OUTSIDE", outsideFile],
+      ["SANDBOX_SOURCE", sourceFile],
+    ]
+      .map(([key, value]) => `set "${key}=${value.replaceAll("\\", "/")}"`)
+      .join(" && ");
+    runtimeArgs.push(
+      "-c",
+      `${fixtureEnv} && ${quoteForCmd(process.execPath)} ${quoteForCmd(childScriptFixture)}`,
+    );
   } else {
     runtimeArgs.push(process.execPath, childScriptFixture);
   }
@@ -163,7 +174,7 @@ if (result.status !== "passed") {
   const diagnostic = String(result.error)
     .replace(/([A-Za-z]:[\\/]|\/)(?:[^\s\\/]+[\\/])+[^\s]*/g, "<path>")
     .replaceAll("\n", " ")
-    .slice(0, 500);
+    .slice(-600);
   process.stdout.write(`::error title=Sandbox smoke failure::${diagnostic}\n`);
   process.stderr.write(`${result.error}\n`);
   process.exitCode = 1;
