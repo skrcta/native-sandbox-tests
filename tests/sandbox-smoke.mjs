@@ -172,9 +172,13 @@ try {
 
 if (result.status !== "passed") {
   const diagnostic = String(result.error)
-    .replace(/([A-Za-z]:[\\/]|\/)(?:[^\s\\/]+[\\/])+[^\s]*/g, "<path>")
-    .replaceAll("\n", " ")
-    .slice(-600);
+    .split(/\r?\n/)
+    .filter((line) => /error|err_|eacces|eperm|enoent|invalid|denied|failed|cannot/i.test(line))
+    .join(" ")
+    .replace(/file:\/\/\/?[A-Za-z]:[^\s]*/g, "<file>")
+    .replace(/[A-Za-z]:[\\/](?:[^\s\\/]+[\\/])+[^\s]*/g, "<path>")
+    .replace(/\/(?:Users|home|runner|private|var|tmp)\/[^\s]*/g, "<path>")
+    .slice(0, 700);
   process.stdout.write(`::error title=Sandbox smoke failure::${diagnostic}\n`);
   process.stderr.write(`${result.error}\n`);
   process.exitCode = 1;
