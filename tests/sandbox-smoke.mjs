@@ -191,7 +191,7 @@ if (result.status !== "passed") {
     .replace(/file:\/\/\/?[A-Za-z]:[^\s]*/g, "<file>")
     .replace(/[A-Za-z]:[\\/](?:[^\s\\/]+[\\/])+[^\s]*/g, "<path>")
     .replace(/\/(?:Users|home|runner|private|var|tmp)\/[^\s]*/g, "<path>")
-    .slice(0, 700);
+    .slice(0, 3000);
   process.stdout.write(`::error title=Sandbox smoke failure::markers=${markers.join(",") || "none"} ${diagnostic}\n`);
   process.stderr.write(`${result.error}\n`);
   process.exitCode = 1;
