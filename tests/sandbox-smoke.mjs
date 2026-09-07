@@ -12,7 +12,8 @@ const workspace = join(fixtureRoot, "workspace");
 const context = join(fixtureRoot, "context");
 const outside = join(fixtureRoot, "outside");
 const home = join(fixtureRoot, "home");
-const temp = join(home, "tmp");
+const appData = join(home, "AppData", "Roaming");
+const localAppData = join(home, "AppData", "Local");
 const workspaceResult = join(workspace, "result.txt");
 const childResult = join(workspace, "child-result.txt");
 const contextFile = join(context, "requirements.txt");
@@ -25,7 +26,14 @@ const started = new Date().toISOString();
 let result;
 
 try {
-  await Promise.all([mkdir(workspace), mkdir(context), mkdir(outside), mkdir(home), mkdir(temp, { recursive: true })]);
+  await Promise.all([
+    mkdir(workspace),
+    mkdir(context),
+    mkdir(outside),
+    mkdir(home),
+    mkdir(appData, { recursive: true }),
+    mkdir(localAppData, { recursive: true }),
+  ]);
   await Promise.all([
     writeFile(contextFile, "context fixture\n"),
     writeFile(outsideFile, "private fixture\n"),
@@ -57,11 +65,13 @@ try {
     WINDIR: process.env.WINDIR,
     COMSPEC: process.env.COMSPEC,
     PATHEXT: process.env.PATHEXT,
-    TEMP: temp,
-    TMP: temp,
-    TMPDIR: temp,
+    TEMP: process.env.TEMP,
+    TMP: process.env.TMP,
+    TMPDIR: process.env.TMPDIR,
     HOME: home,
     USERPROFILE: home,
+    APPDATA: appData,
+    LOCALAPPDATA: localAppData,
     LANG: process.env.LANG,
     LC_ALL: process.env.LC_ALL,
     SANDBOX_WORKSPACE: workspace,
