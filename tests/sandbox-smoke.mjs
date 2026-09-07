@@ -12,6 +12,7 @@ const workspace = join(fixtureRoot, "workspace");
 const context = join(fixtureRoot, "context");
 const outside = join(fixtureRoot, "outside");
 const home = join(fixtureRoot, "home");
+const sandboxTemp = join(home, "tmp");
 const appData = join(home, "AppData", "Roaming");
 const localAppData = join(home, "AppData", "Local");
 const workspaceResult = join(workspace, "result.txt");
@@ -31,6 +32,7 @@ try {
     mkdir(context),
     mkdir(outside),
     mkdir(home),
+    mkdir(sandboxTemp, { recursive: true }),
     mkdir(appData, { recursive: true }),
     mkdir(localAppData, { recursive: true }),
   ]);
@@ -72,6 +74,7 @@ try {
     USERPROFILE: home,
     APPDATA: appData,
     LOCALAPPDATA: localAppData,
+    CLAUDE_CODE_TMPDIR: sandboxTemp,
     LANG: process.env.LANG,
     LC_ALL: process.env.LC_ALL,
     SANDBOX_WORKSPACE: workspace,
@@ -80,7 +83,14 @@ try {
     SANDBOX_SOURCE: sourceFile,
   };
 
-  const child = spawn(process.execPath, [runtimeCli, "--settings", settingsFile, process.execPath, childScript], {
+  const runtimeArgs = [runtimeCli, "--settings", settingsFile];
+  if (process.platform === "win32") {
+    const quoteForCmd = (value) => `"${value.replaceAll('"', '\\"')}"`;
+    runtimeArgs.push("-c", `${quoteForCmd(process.execPath)} ${quoteForCmd(childScript)}`);
+  } else {
+    runtimeArgs.push(process.execPath, childScript);
+  }
+  const child = spawn(process.execPath, runtimeArgs, {
     cwd: workspace,
     env,
     stdio: ["ignore", "pipe", "pipe"],
